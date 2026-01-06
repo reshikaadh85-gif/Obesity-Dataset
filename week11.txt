@@ -1,0 +1,433 @@
+
+// FILE 1: Product.cs (Model)
+
+using SQLite;
+using System.ComponentModel.DataAnnotations;
+
+public class Product
+{
+    [PrimaryKey, AutoIncrement]
+    public int Id { get; set; }
+
+    [Required(ErrorMessage = "Product name is required")]
+    [StringLength(50, MinimumLength = 2, ErrorMessage = "Name must be between 2 and 50 characters")]
+    public string Name { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "Price is required")]
+    [Range(0.01, 10000, ErrorMessage = "Price must be between 0.01 and 10000")]
+    public decimal Price { get; set; }
+
+    [Required(ErrorMessage = "Stock quantity is required")]
+    [Range(0, 1000, ErrorMessage = "Stock must be between 0 and 1000")]
+    public int Stock { get; set; }
+}
+
+
+
+// FILE 2: AppDatabase.cs (Database Connection)
+
+using SQLite;
+
+public class AppDatabase
+{
+    private SQLiteAsyncConnection _database;
+
+    public AppDatabase()
+    {
+        // Step 1: Get the database path using FileSystem.AppDataDirectory
+        var dbPath = Path.Combine(FileSystem.AppDataDirectory, "products.db3");
+
+        // Step 2: Create SQLite connection
+        _database = new SQLiteAsyncConnection(dbPath);
+
+        // Step 3: Create Product table if it doesn't exist
+        _database.CreateTableAsync<Product>().Wait();
+    }
+
+    public SQLiteAsyncConnection GetConnection()
+    {
+        return _database;
+    }
+}
+
+
+
+// FILE 3: ProductService.cs (Service Layer)
+
+using SQLite;
+
+public class ProductService
+{
+    private readonly AppDatabase _appDatabase;
+    private SQLiteAsyncConnection _database;
+
+    public ProductService(AppDatabase appDatabase)
+    {
+        _appDatabase = appDatabase;
+        _database = _appDatabase.GetConnection();
+    }
+
+    // CREATE - Insert a new product
+    public async Task AddProductAsync(Product product)
+    {
+        await Task.Delay(300); // Simulate delay
+        await _database.InsertAsync(product);
+    }
+
+    // READ - Get all products
+    public async Task<List<Product>> GetAllProductsAsync()
+    {
+        await Task.Delay(500); // Simulate delay
+        return await _database.Table<Product>().ToListAsync();
+    }
+
+    // READ - Get product by ID
+    public async Task<Product?> GetProductByIdAsync(int id)
+    {
+        return await _database.Table<Product>()
+                              .Where(p => p.Id == id)
+                              .FirstOrDefaultAsync();
+    }
+
+    // UPDATE - Update existing product
+    public async Task UpdateProductAsync(Product product)
+    {
+        await Task.Delay(300); // Simulate delay
+        await _database.UpdateAsync(product);
+    }
+
+    // DELETE - Delete a product
+    public async Task DeleteProductAsync(int id)
+    {
+        await Task.Delay(300); // Simulate delay
+        var product = await _database.Table<Product>()
+                                     .Where(p => p.Id == id)
+                                     .FirstOrDefaultAsync();
+        if (product != null)
+        {
+            await _database.DeleteAsync(product);
+        }
+    }
+
+    // AGGREGATE - Get total product count
+    public async Task<int> GetProductCountAsync()
+    {
+        return await _database.Table<Product>().CountAsync();
+    }
+
+    // AGGREGATE - Get total inventory value
+    public async Task<decimal> GetTotalInventoryValueAsync()
+    {
+        var products = await _database.Table<Product>().ToListAsync();
+        return products.Sum(p => p.Price * p.Stock);
+    }
+}
+
+
+
+// FILE 4: MauiProgram.cs
+
+public static class MauiProgram
+{
+    public static MauiApp CreateMauiApp()
+    {
+        var builder = MauiApp.CreateBuilder();
+        builder
+            .UseMauiApp<App>()
+            .ConfigureFonts(fonts =>
+            {
+                fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
+            });
+
+        builder.Services.AddMauiBlazorWebView();
+
+        // Register AppDatabase as Singleton (one instance for entire app)
+        builder.Services.AddSingleton<AppDatabase>();
+
+        // Register ProductService as Singleton
+        builder.Services.AddSingleton<ProductService>();
+
+        return builder.Build();
+    }
+}
+
+
+
+// FILE 5: ProductPage.razor
+
+@page "/products"
+@using System.ComponentModel.DataAnnotations
+@inject ProductService ProductService
+
+<h3>SQLite Product Management</h3>
+
+<!-- Statistics Card -->
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="alert alert-info">
+            <strong>📦 Total Products:</strong> @productCount
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="alert alert-success">
+            <strong>💰 Total Inventory Value:</strong> $@totalValue.ToString("F2")
+        </div>
+    </div>
+</div>
+
+<!-- Add New Product Form -->
+<div class="card mb-4">
+    <div class="card-body">
+        <h4>Add New Product</h4>
+        
+        <EditForm Model="@newProduct" OnValidSubmit="HandleAddProduct">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label>Product Name:</label>
+                    <InputText @bind-Value="newProduct.Name" class="form-control" />
+                </div>
+
+                <div class="col-md-4 mb-3">
+                    <label>Price:</label>
+                    <InputNumber @bind-Value="newProduct.Price" class="form-control" />
+                </div>
+
+                <div class="col-md-4 mb-3">
+                    <label>Stock:</label>
+                    <InputNumber @bind-Value="newProduct.Stock" class="form-control" />
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" disabled="@isLoading">
+                @(isLoading ? "Adding..." : "Add Product")
+            </button>
+        </EditForm>
+    </div>
+</div>
+
+<!-- Product List -->
+<div class="card">
+    <div class="card-body">
+        <h4>Product List</h4>
+        
+        @if (isLoading)
+        {
+            <p><em>Loading products from SQLite database...</em></p>
+        }
+        else if (products == null || !products.Any())
+        {
+            <p>No products available. Add your first product above!</p>
+        }
+        else
+        {
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Price</th>
+                        <th>Stock</th>
+                        <th>Total Value</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var product in products)
+                    {
+                        <tr>
+                            <td>@product.Id</td>
+                            <td>@product.Name</td>
+                            <td>$@product.Price.ToString("F2")</td>
+                            <td>@product.Stock</td>
+                            <td>$@((product.Price * product.Stock).ToString("F2"))</td>
+                            <td>
+                                <button class="btn btn-warning btn-sm me-2" 
+                                        @onclick="() => StartEdit(product)"
+                                        disabled="@isLoading">
+                                    Edit
+                                </button>
+                                <button class="btn btn-danger btn-sm" 
+                                        @onclick="() => HandleDeleteProduct(product.Id)"
+                                        disabled="@isLoading">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<!-- Edit Product Modal -->
+@if (editingProduct != null)
+{
+    <div class="modal" style="display:block; background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Product</h5>
+                </div>
+                <div class="modal-body">
+                    <EditForm Model="@editingProduct" OnValidSubmit="HandleUpdateProduct">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+
+                        <div class="mb-3">
+                            <label>Product Name:</label>
+                            <InputText @bind-Value="editingProduct.Name" class="form-control" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label>Price:</label>
+                            <InputNumber @bind-Value="editingProduct.Price" class="form-control" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label>Stock:</label>
+                            <InputNumber @bind-Value="editingProduct.Stock" class="form-control" />
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" @onclick="CancelEdit">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Update</button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Product> products = new List<Product>();
+    private Product newProduct = new Product();
+    private Product? editingProduct = null;
+    private bool isLoading = false;
+    private int productCount = 0;
+    private decimal totalValue = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProducts();
+        await LoadStatistics();
+    }
+
+    private async Task LoadProducts()
+    {
+        isLoading = true;
+        StateHasChanged();
+        products = await ProductService.GetAllProductsAsync();
+        isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadStatistics()
+    {
+        productCount = await ProductService.GetProductCountAsync();
+        totalValue = await ProductService.GetTotalInventoryValueAsync();
+        StateHasChanged();
+    }
+
+    private async Task HandleAddProduct()
+    {
+        isLoading = true;
+        await ProductService.AddProductAsync(newProduct);
+        newProduct = new Product();
+        await LoadProducts();
+        await LoadStatistics();
+        isLoading = false;
+    }
+
+    private void StartEdit(Product product)
+    {
+        editingProduct = new Product
+        {
+            Id = product.Id,
+            Name = product.Name,
+            Price = product.Price,
+            Stock = product.Stock
+        };
+    }
+
+    private async Task HandleUpdateProduct()
+    {
+        if (editingProduct != null)
+        {
+            await ProductService.UpdateProductAsync(editingProduct);
+            editingProduct = null;
+            await LoadProducts();
+            await LoadStatistics();
+        }
+    }
+
+    private void CancelEdit()
+    {
+        editingProduct = null;
+    }
+
+    private async Task HandleDeleteProduct(int id)
+    {
+        isLoading = true;
+        await ProductService.DeleteProductAsync(id);
+        await LoadProducts();
+        await LoadStatistics();
+        isLoading = false;
+    }
+}
+
+<!-- 
+KEY CONCEPTS:
+
+1. SQLITE DATABASE:
+   - Local relational database
+   - Persistent storage (survives app restart)
+   - Structured data with tables and rows
+   - Cross-platform (Windows, Android, iOS, Mac)
+
+2. FILESYSTEM:
+   - FileSystem.AppDataDirectory: Safe, app-specific location
+   - Path.Combine: Cross-platform path creation
+   - Database file: products.db3
+
+3. DATABASE CONNECTION:
+   - SQLiteAsyncConnection: Async database operations
+   - CreateTableAsync<T>: Automatically creates table from class
+   - Connection reused throughout app (Singleton pattern)
+
+4. SQLITE ATTRIBUTES:
+   - [PrimaryKey]: Defines primary key column
+   - [AutoIncrement]: Auto-generates unique IDs
+   - Converts C# class to database table automatically
+
+5. CRUD OPERATIONS:
+   - CREATE: InsertAsync(object) - Adds new row
+   - READ: Table<T>().ToListAsync() - Gets all rows
+   - UPDATE: UpdateAsync(object) - Updates existing row
+   - DELETE: DeleteAsync(object) - Removes row
+
+6. AGGREGATE FUNCTIONS:
+   - CountAsync(): Returns total number of records
+   - Custom aggregates using LINQ (Sum, Average, etc.)
+
+7. ARCHITECTURE BENEFITS:
+   - Same service layer pattern from Week 10
+   - Easy migration from List to SQLite
+   - Only changed ProductService implementation
+   - UI code unchanged (loose coupling)
+
+8. DEPENDENCY INJECTION:
+   - AppDatabase registered as Singleton
+   - ProductService registered as Singleton
+   - Both injected where needed
+
+
+
+
+NUGET PACKAGE REQUIRED:
+Install-Package: sqlite-net-pcl
+
